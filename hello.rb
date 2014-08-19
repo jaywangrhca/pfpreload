@@ -3,18 +3,29 @@ require 'optparse'
 mutex = Mutex.new
 resource = ConditionVariable.new
 count = 0
+threads = []
 1.upto(10) do |id|
     id = Thread.new {
         mutex.synchronize {
-            while count > 1
+            while count > 3
                 resource.wait(mutex)
             end
+            count +=1
+            print "first count: "
+            puts count
         }
-        count +=1
         puts "I'm in thread #{id}"
         sleep rand(9)
-        count -=1
+        mutex.synchronize {
+            count -=1
+            print "second cont: "
+            puts count
+            resource.signal
+        }
     }
-    id.join
+    threads << id
 end
-sleep while true
+threads.each do |td|
+    # TODO
+    td.join
+end
