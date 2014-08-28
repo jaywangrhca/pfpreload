@@ -1,4 +1,5 @@
 require 'thread'
+require 'logger'
 require 'fileutils'
 require 'net/smtp'
 require 'optparse'
@@ -15,19 +16,22 @@ end
 
 def preload(dir, user, passwd, instance, client)
     puts "preloading dir: #{dir}"
-    log_file = "#{$log_dir}/this_time_synced#{dir.gsub('/','_')}"
-    %x(
+    preload_log_file = "#{$log_dir}/this_time_synced#{dir.gsub(/\/| /,'_')}"
+    if ! system("/usr/bin/pgrep -f '#{instance} -Zproxyload sync #{dir}'")
+        $logger.info("Start to sync #{dir}!")
+        %x(
     export P4USER=#{user}
     export P4PASSWD=#{passwd}
     export P4CLIENT=#{client}
     export P4PORT=#{instance}
     export PATH=/opt/perforce/git-fusion/bin:/opt/perforce/git-fusion/libexec:/opt/perforce/usr/bin:/sbin:/bin:/usr/sbin:/usr/bin:/usr/X11R6/bin:/usr/local/bin:/bin:/usr/bin:/usr/local/sbin:/usr/sbin:/sbin:/opt/perforce/bin:/home/perforce/bin:/opt/perforce/bin/p4
-    if ! /usr/bin/pgrep -f "Zproxyload sync #{dir}"; then
-        /opt/perforce/bin/p4 -p #{instance} -Zproxyload sync #{dir}/... &>#{log_file}
+    /opt/perforce/bin/p4 -p #{instance} -Zproxyload sync #{dir}/... &>#{preload_log_file}
+        )
+        $logger.info("Sync #{dir} is done!")
     else
-        touch "#{$log_dir}/last_time_still_running#{dir.gsub('/','_')}"
-    fi
-    )
+        $logger.warn("Old process is syncing #{dir}!")
+        %x(touch "#{$log_dir}/last_time_still_running#{dir.gsub(/\/| /,'_')}")
+    end
 end
 
 def pfdir(root, depth, user, passwd, instance, client)
@@ -105,17 +109,28 @@ rescue OptionParser::InvalidOption, OptionParser::MissingArgument, OptionParser:
     exit
 end
 
+epoch = Time.now.to_i
+
+log_name = "/tmp/#{epoch}_#{options[:instance]}.log}"
+puts "Log file is #{log_name}"
+log_file = File.open(log_name, 'w')
+$logger = Logger.new(log_file)
+$logger.formatter = proc do |severity, datetime, progname, msg|
+      "#{datetime} #{severity}: #{msg}\n"
+end
+$logger.info("Program start:")
+$logger.info("for instance: #{options[:instance]}, root path: #{options[:root]}, depth #{options[:depth]}, threads:  #{options[:thread]}")
+
 connection = login_test(options[:user], options[:passwd], options[:instance], options[:client])
 if   connection =~ /^$/
+    $logger.error("Connection test failed! Check username, password and client!")
     raise "Connection test failed, please check instance, username, passwrod!"
 end
 
-start_time = Time.now
+$logger.info("Script start!")
+dirs = pfdir(options[:root], options[:depth], options[:user], options[:passwd], options[:instance], options[:client]).split("\n")
 
-dirs = pfdir(options[:root], options[:depth], options[:user], options[:passwd], options[:instance], options[:client]).split
-
-#print "dirs are: "
-#p dirs
+$logger.info("Preload for dirs: #{dirs}")
 
 if options[:thread] > dirs.count
     num_of_thread = dirs.count
@@ -125,8 +140,10 @@ end
 
 puts "num of thread is #{num_of_thread}"
 
-epoch = Time.now.to_i
-$log_dir = "/tmp/#{epoch}/#{options[:instance]}"
+$logger.info("Actually thread is #{num_of_thread}!")
+
+$log_dir = "/tmp/#{options[:instance]}/#{epoch}"
+$logger.info("Logs for preload are in #{$log_dir}")
 if not File.directory?($log_dir)
     FileUtils.mkdir_p($log_dir)
 end
@@ -157,22 +174,15 @@ threads.each do |td|
     td.join
 end
 
-end_time = Time.now
-FileUtils.cd($log_dir)
-this_time = Dir.glob('this_time*')
-last_time = Dir.glob('last_time*')
-puts this_time
-puts last_time
+$logger.info("Preload is finished!")
+$logger.close
+#log_file.close
+log_contents = File.read(log_name)
 message = <<MESSAGE_END
 From: Private Person <zu-jie.wang@ubisoft.com>
 To: A Test User <zu-jie.wang@ubisoft.com>
 Subject: SMTP e-mail test
-Start time is #{start_time}
-End time is #{end_time}
-log folder is #{$log_dir}
-#{this_time} is done
-#{last_time} is syncing
-This is a test e-mail message.
+#{log_contents}
 MESSAGE_END
 
 Net::SMTP.start('localhost') do |smtp|
