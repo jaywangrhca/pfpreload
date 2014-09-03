@@ -57,7 +57,7 @@ end
 
 options = {}
 opt_parser = OptionParser.new do |opts|
-    opts.banner = "Usage: opt.rb -t 3 -d 2 -r //fcc-data-source/ -i sha-acu-dlc:1888 -u test -p test [options]"
+    opts.banner = "Usage: preload.rb -t 3 -d 1 -r //fcc-data-source -i sha-acu-dlc:1888 -u test -p test -c wks111 [options]"
 
     opts.on('-t N', '--thread NUMBER', Integer, 'How many threads runing together(1-20)') do |value|
         options[:thread] = value
@@ -67,7 +67,7 @@ opt_parser = OptionParser.new do |opts|
         options[:depth] = value
     end
 
-    opts.on('-l LOG', '--log LOG', 'Log file to save logs') do |value|
+    opts.on('-l LOG', '--log LOG', 'Log file to save logs[optional]') do |value|
         options[:log] = value
     end
 
