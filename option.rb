@@ -34,13 +34,16 @@ def preload(dir, user, passwd, instance, client)
 end
 
 def pfdir(root, depth, user, passwd, instance, client)
+    root = root.sub(/\/\.*$/,'')
+    puts root
+    raise
     case depth
     when 0
         dir = "#{root}/*"
     when 1
         dir = "#{root}/*/*"
     when 2
-        dir = "#{root}/*/*/*)"
+        dir = "#{root}/*/*/*"
     end
     %x(
     export P4USER=#{user}
@@ -113,7 +116,11 @@ epoch = Time.now.to_i
 host_name = `hostname`
 log_name = options[:log] || "/tmp/#{epoch}_#{options[:instance]}.log"
 puts "Log file is #{log_name}"
-log_file = File.open(log_name, 'w')
+begin
+    log_file = File.open(log_name, 'w')
+rescue
+    raise "Can't open to write log file: #{log_name} !"
+end
 $logger = Logger.new(log_file)
 $logger.formatter = proc do |severity, datetime, progname, msg|
     "#{datetime} #{severity}: #{msg}\n"
