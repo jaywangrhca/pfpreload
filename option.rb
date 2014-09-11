@@ -14,10 +14,10 @@ def login_test(user, passwd, instance, client)
     )
 end
 
-def preload(dir, user, passwd, instance, client)
+def preload(dir, user, passwd, instance, client, force)
     puts "preloading dir: #{dir}"
     preload_log_file = "#{$log_dir}/this_time_synced#{dir.gsub(/\/| /,'_')}"
-    if ! system("/usr/bin/pgrep -f '#{instance} -Zproxyload sync #{dir}'")
+    if ! system("/usr/bin/pgrep -f '#{instance} -Zproxyload sync #{force} #{dir}'")
         $logger.info("Start to sync #{dir} !")
         %x(
     export P4USER=#{user}
@@ -25,7 +25,7 @@ def preload(dir, user, passwd, instance, client)
     export P4CLIENT=#{client}
     export P4PORT=#{instance}
     export PATH=/opt/perforce/git-fusion/bin:/opt/perforce/git-fusion/libexec:/opt/perforce/usr/bin:/sbin:/bin:/usr/sbin:/usr/bin:/usr/X11R6/bin:/usr/local/bin:/bin:/usr/bin:/usr/local/sbin:/usr/sbin:/sbin:/opt/perforce/bin:/home/perforce/bin:/opt/perforce/bin/p4
-    /opt/perforce/bin/p4 -p #{instance} -Zproxyload sync #{dir}/... &>#{preload_log_file}
+    /opt/perforce/bin/p4 -p #{instance} -Zproxyload sync #{force} #{dir}/... &>#{preload_log_file}
         )
         $logger.info("Sync #{dir} is done !")
     else
@@ -36,7 +36,6 @@ end
 def pfdir(root, depth, user, passwd, instance, client)
     root = root.sub(/\/\.*$/,'')
     puts root
-    raise
     case depth
     when 0
         dir = "#{root}/*"
@@ -59,6 +58,8 @@ options = {}
 opt_parser = OptionParser.new do |opts|
     opts.banner = "Usage: preload.rb -t 3 -d 1 -r //fcc-data-source -i sha-acu-dlc:1888 -u test -p test -c wks111 [options]"
 
+    options[:force] = ''
+
     opts.on('-t N', '--thread NUMBER', Integer, 'How many threads runing together(1-20)') do |value|
         options[:thread] = value
     end
@@ -67,7 +68,7 @@ opt_parser = OptionParser.new do |opts|
         options[:depth] = value
     end
 
-    opts.on('-l LOG', '--log LOG', 'Log file to save logs[optional]') do |value|
+    opts.on('-l LOG', '--log LOG', 'Log file to save logs [Optional]') do |value|
         options[:log] = value
     end
 
@@ -89,6 +90,10 @@ opt_parser = OptionParser.new do |opts|
 
     opts.on('-c CLIENT', '--client CLIENT', 'Client for this instance') do |value|
         options[:client] = value
+    end
+
+    opts.on('-f', '--force', 'Force sync [Optional]') do |value|
+        options[:force] = '-f'
     end
 end
 
@@ -169,7 +174,7 @@ dirs.each do |dir|
             end
             count +=1
         }
-        preload(dir, options[:user], options[:passwd], options[:instance], options[:client])
+        preload(dir, options[:user], options[:passwd], options[:instance], options[:client], options[:force])
         mutex.synchronize {
             count -=1
             resource.signal
