@@ -25,11 +25,14 @@ def preload(dir, user, passwd, instance, client, force)
     export P4CLIENT=#{client}
     export P4PORT=#{instance}
     export PATH=/opt/perforce/git-fusion/bin:/opt/perforce/git-fusion/libexec:/opt/perforce/usr/bin:/sbin:/bin:/usr/sbin:/usr/bin:/usr/X11R6/bin:/usr/local/bin:/bin:/usr/bin:/usr/local/sbin:/usr/sbin:/sbin:/opt/perforce/bin:/home/perforce/bin:/opt/perforce/bin/p4
-    /opt/perforce/bin/p4 -p #{instance} -Zproxyload sync #{force} #{dir}/... &>#{preload_log_file}
+    p4 -p #{instance} -Zproxyload sync #{force} #{dir}/... &>#{preload_log_file}
         )
         $logger.info("Sync #{dir} is done !")
     else
-        $logger.warn("Old process is syncing #{dir} !")
+        $logger.warn("
+######
+Old process is syncing #{dir} !
+######")
     end
 end
 
@@ -59,12 +62,15 @@ opt_parser = OptionParser.new do |opts|
     opts.banner = "Usage: preload.rb -t 3 -d 1 -r //fcc-data-source -i sha-acu-dlc:1888 -u test -p test -c wks111 [options]"
 
     options[:force] = ''
+    options[:thread] = 15
+    options[:depth] = 0
+    options[:mail] = 'UPS_APAC_Operations@ubisoft.com'
 
-    opts.on('-t N', '--thread NUMBER', Integer, 'How many threads runing together(1-20)') do |value|
+    opts.on('-t N', '--thread NUMBER', Integer, 'How many threads runing together(1-20), default is 15') do |value|
         options[:thread] = value
     end
 
-    opts.on('-d N', '--depth NUMBER', Integer, 'How deep would the dir look for(0-2)') do |value|
+    opts.on('-d N', '--depth NUMBER', Integer, 'How deep would the dir look for(0-2), default is 0') do |value|
         options[:depth] = value
     end
 
@@ -95,11 +101,18 @@ opt_parser = OptionParser.new do |opts|
     opts.on('-f', '--force', 'Force sync [Optional]') do |value|
         options[:force] = '-f'
     end
+
+    opts.on('-m Email', '--mail', 'Email address, format: a@a.com or "a@a.com b@b.com" [Optional]') do |value|
+        options[:mail] = value
+    end
 end
+
+raise "Error: No P4 binary!" if ! system("
+export PATH=/opt/perforce/git-fusion/bin:/opt/perforce/git-fusion/libexec:/opt/perforce/usr/bin:/sbin:/bin:/usr/sbin:/usr/bin:/usr/X11R6/bin:/usr/local/bin:/bin:/usr/bin:/usr/local/sbin:/usr/sbin:/sbin:/opt/perforce/bin:/home/perforce/bin:/opt/perforce/bin/p4;  which p4 >/dev/null 2>&1")
 
 begin
     opt_parser.parse!
-    mandatory = [:thread, :root, :depth, :instance, :user, :passwd, :client]
+    mandatory = [:root, :instance, :user, :passwd, :client]
     missing = mandatory.select{ |param| options[param].nil? }
     if not missing.empty?
         raise OptionParser::MissingArgument, "Missing options: #{missing.join(', ')}"
@@ -110,13 +123,17 @@ begin
     if not (0..2).include?(options[:depth])
         raise OptionParser::InvalidArgument, 'Depth number is out of scope(0-2)'
     end
+    $email = options[:mail].squeeze(' ').split(' ')
+    $email.each do |email|
+        raise OptionParser::InvalidArgument, 'Invalid Email address' if not email.match("^[a-zA-Z0-9_.-]+@[a-zA-Z0-9-]+.[a-zA-Z0-9.-]+$")
+        end
 rescue OptionParser::InvalidOption, OptionParser::MissingArgument, OptionParser::InvalidArgument
     puts $!.to_s
     puts opt_parser
     exit
 end
 
-epoch = Time.now.to_i
+epoch = Time.now.strftime("%Y%m%dT%H%M")
 
 host_name = `hostname`
 log_name = options[:log] || "/tmp/#{epoch}_#{options[:instance]}.log"
@@ -191,11 +208,11 @@ $logger.close
 log_contents = File.read(log_name)
 message = <<MESSAGE_END
 From: #{host_name } <root@ubisoft.com>
-To: APAC GNS PRODUCTION <zu-jie.wang@ubisoft.com>
+To: UPS <#{$email}>
 Subject: #{host_name} instance #{options[:instance]} preload
 #{log_contents}
 MESSAGE_END
 
 Net::SMTP.start('localhost') do |smtp|
-    smtp.send_message message, 'root@ubisoft.com', 'zu-jie.wang@ubisoft.com'
+    smtp.send_message message, 'root@ubisoft.com', $email
 end
