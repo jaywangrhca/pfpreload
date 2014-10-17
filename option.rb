@@ -64,7 +64,7 @@ opt_parser = OptionParser.new do |opts|
     options[:force] = ''
     options[:thread] = 15
     options[:depth] = 0
-    options[:mail] = 'UPS_APAC_Operations@ubisoft.com'
+    options[:mail] = 'UPS_APAC_Operations@example.com'
 
     opts.on('-t N', '--thread NUMBER', Integer, 'How many threads runing together(1-20), default is 15') do |value|
         options[:thread] = value
@@ -207,12 +207,12 @@ $logger.close
 #log_file.close
 log_contents = File.read(log_name)
 message = <<MESSAGE_END
-From: #{host_name } <root@ubisoft.com>
+From: #{host_name } <root@example.com>
 To: UPS <#{$email}>
 Subject: #{host_name} instance #{options[:instance]} preload
 #{log_contents}
 MESSAGE_END
 
 Net::SMTP.start('localhost') do |smtp|
-    smtp.send_message message, 'root@ubisoft.com', $email
+    smtp.send_message message, 'root@example.com', $email
 end
