@@ -1,34 +1,37 @@
+#!/usr/bin/ruby
 require 'thread'
 require 'logger'
 require 'fileutils'
 require 'net/smtp'
 require 'optparse'
-def login_test(user, passwd, instance, client)
-    %x(
-    export P4USER=#{user}
-    export P4PASSWD=#{passwd}
-    export P4CLIENT=#{client}
-    export P4PORT=#{instance}
-    export PATH=/opt/perforce/git-fusion/bin:/opt/perforce/git-fusion/libexec:/opt/perforce/usr/bin:/sbin:/bin:/usr/sbin:/usr/bin:/usr/X11R6/bin:/usr/local/bin:/bin:/usr/bin:/usr/local/sbin:/usr/sbin:/sbin:/opt/perforce/bin:/home/perforce/bin:/opt/perforce/bin/p4
-    p4 groups
+def p4proxy_test(user, passwd, instance, client)
+    system(
+    "export P4USER=#{user};
+    export P4PASSWD=#{passwd};
+    export P4CLIENT=#{client};
+    export P4PORT=#{instance};
+    export PATH=/opt/perforce/git-fusion/bin:/opt/perforce/git-fusion/libexec:/opt/perforce/usr/bin:/sbin:/bin:/usr/sbin:/usr/bin:/usr/X11R6/bin:/usr/local/bin:/bin:/usr/bin:/usr/local/sbin:/usr/sbin:/sbin:/opt/perforce/bin:/home/perforce/bin:/opt/perforce/bin/p4;
+    echo $P4PASSWD | p4 login && p4 clients | grep #{client}"
     )
 end
 
-def preload(dir, user, passwd, instance, client, force)
+def preload(dir, user, instance, client, force)
     puts "preloading dir: #{dir}"
     preload_log_file = "#{$log_dir}/this_time_synced#{dir.gsub(/\/| /,'_')}"
     if ! system("/usr/bin/pgrep -f '#{instance} -Zproxyload sync #{force} #{dir}'")
+#puts "start syncing #{dir} !"
         $logger.info("Start to sync #{dir} !")
         %x(
     export P4USER=#{user}
-    export P4PASSWD=#{passwd}
     export P4CLIENT=#{client}
     export P4PORT=#{instance}
     export PATH=/opt/perforce/git-fusion/bin:/opt/perforce/git-fusion/libexec:/opt/perforce/usr/bin:/sbin:/bin:/usr/sbin:/usr/bin:/usr/X11R6/bin:/usr/local/bin:/bin:/usr/bin:/usr/local/sbin:/usr/sbin:/sbin:/opt/perforce/bin:/home/perforce/bin:/opt/perforce/bin/p4
     p4 -p #{instance} -Zproxyload sync #{force} #{dir}/... &>#{preload_log_file}
         )
         $logger.info("Sync #{dir} is done !")
+#puts "end syncing #{dir} !"
     else
+#puts "Old process is syncing #{dir} !"
         $logger.warn("
 ######
 Old process is syncing #{dir} !
@@ -36,7 +39,7 @@ Old process is syncing #{dir} !
     end
 end
 
-def pfdir(root, depth, user, passwd, instance, client)
+def pfdir(root, depth, user, instance, client)
     root = root.sub(/\/\.*$/,'')
     puts root
     case depth
@@ -47,14 +50,29 @@ def pfdir(root, depth, user, passwd, instance, client)
     when 2
         dir = "#{root}/*/*/*"
     end
+
     %x(
     export P4USER=#{user}
-    export P4PASSWD=#{passwd}
     export P4CLIENT=#{client}
     export P4PORT=#{instance}
     export PATH=/opt/perforce/git-fusion/bin:/opt/perforce/git-fusion/libexec:/opt/perforce/usr/bin:/sbin:/bin:/usr/sbin:/usr/bin:/usr/X11R6/bin:/usr/local/bin:/bin:/usr/bin:/usr/local/sbin:/usr/sbin:/sbin:/opt/perforce/bin:/home/perforce/bin:/opt/perforce/bin/p4
     p4 dirs #{dir}
     )
+end
+
+def alert_mail(msg, recipient, instance)
+    message = <<MESSAGE_END
+From: #{$host_name } <root@example.com>
+To: UPS <#{$email}>
+Subject: #{$host_name} instance #{instance} preload
+!!!!!!!!!!
+#{msg}
+!!!!!!!!!!
+MESSAGE_END
+
+    Net::SMTP.start('localhost') do |smtp|
+        smtp.send_message message, 'root@example.com', recipient
+    end
 end
 
 options = {}
@@ -107,8 +125,14 @@ opt_parser = OptionParser.new do |opts|
     end
 end
 
-raise "Error: No P4 binary!" if ! system("
+begin
+    raise "Error: No P4 binary!" if ! system("
 export PATH=/opt/perforce/git-fusion/bin:/opt/perforce/git-fusion/libexec:/opt/perforce/usr/bin:/sbin:/bin:/usr/sbin:/usr/bin:/usr/X11R6/bin:/usr/local/bin:/bin:/usr/bin:/usr/local/sbin:/usr/sbin:/sbin:/opt/perforce/bin:/home/perforce/bin:/opt/perforce/bin/p4;  which p4 >/dev/null 2>&1")
+rescue => error
+    alert_mail(error, $email, options[:instance])
+    raise
+end
+
 
 begin
     opt_parser.parse!
@@ -127,22 +151,24 @@ begin
     $email.each do |email|
         raise OptionParser::InvalidArgument, 'Invalid Email address' if not email.match("^[a-zA-Z0-9_.-]+@[a-zA-Z0-9-]+.[a-zA-Z0-9.-]+$")
         end
-rescue OptionParser::InvalidOption, OptionParser::MissingArgument, OptionParser::InvalidArgument
-    puts $!.to_s
+rescue OptionParser::InvalidOption, OptionParser::MissingArgument, OptionParser::InvalidArgument => error
+    puts error
     puts opt_parser
     exit
 end
 
 epoch = Time.now.strftime("%Y%m%dT%H%M")
 
-host_name = `hostname`
-log_name = options[:log] || "/tmp/#{epoch}_#{options[:instance]}.log"
+$host_name = `hostname -s`
+log_name = options[:log] || "/tmp/p4p/#{epoch}_#{options[:instance]}.log"
 puts "Log file is #{log_name}"
 begin
     log_file = File.open(log_name, 'w')
-rescue
-    raise "Can't open to write log file: #{log_name} !"
+rescue => error
+    alert_mail("#{error}! Can't open to write log file: #{log_name} !" , $email, options[:instance])
+    raise
 end
+
 $logger = Logger.new(log_file)
 $logger.formatter = proc do |severity, datetime, progname, msg|
     "#{datetime} #{severity}: #{msg}\n"
@@ -150,14 +176,19 @@ end
 $logger.info("Program start:")
 $logger.info("for instance: #{options[:instance]}, root path: #{options[:root]}, depth #{options[:depth]}, threads:  #{options[:thread]}")
 
-connection = login_test(options[:user], options[:passwd], options[:instance], options[:client])
-if connection =~ /^$/
+if ! p4proxy_test(options[:user], options[:passwd], options[:instance], options[:client])
     $logger.error("Connection test failed! Check username, password and client!")
-    raise "Connection test failed, please check instance, username, passwrod!"
+    begin
+        raise "Connection test or p4 client test failed, please check instance, username, passwrod, client!"
+    rescue => error
+        alert_mail(error, $email, options[:instance])
+        raise
+    end
 end
 
 $logger.info("Script start!")
-dirs = pfdir(options[:root], options[:depth], options[:user], options[:passwd], options[:instance], options[:client]).split("\n")
+dirs = pfdir(options[:root], options[:depth], options[:user], options[:instance], options[:client]).split("\n")
+dirs.reverse!
 
 $logger.info("Preload for dirs: #{dirs}")
 
@@ -171,7 +202,7 @@ puts "num of thread is #{num_of_thread}"
 
 $logger.info("Real thread is #{num_of_thread} !")
 
-$log_dir = "/tmp/#{options[:instance]}/#{epoch}"
+$log_dir = "/tmp/p4p/#{options[:instance].split(':')[-1]}/#{epoch}"
 $logger.info("Logs for preload are in #{$log_dir}")
 if not File.directory?($log_dir)
     FileUtils.mkdir_p($log_dir)
@@ -191,7 +222,7 @@ dirs.each do |dir|
             end
             count +=1
         }
-        preload(dir, options[:user], options[:passwd], options[:instance], options[:client], options[:force])
+        preload(dir, options[:user], options[:instance], options[:client], options[:force])
         mutex.synchronize {
             count -=1
             resource.signal
@@ -204,12 +235,12 @@ end
 
 $logger.info("Preload is finished!")
 $logger.close
-#log_file.close
+
 log_contents = File.read(log_name)
 message = <<MESSAGE_END
-From: #{host_name } <root@example.com>
+From: #{$host_name } <root@example.com>
 To: UPS <#{$email}>
-Subject: #{host_name} instance #{options[:instance]} preload
+Subject: #{$host_name} instance #{options[:instance]} preload
 #{log_contents}
 MESSAGE_END
 
